@@ -1,0 +1,125 @@
+name: CD
+
+on:
+  # workflow_run:
+  #   workflows:
+  #     - CI
+  #   types:
+  #     - completed
+  #   branches:
+  #     - 'develop'
+  #     - 'main'
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - 'README.md'
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_name: ${{ steps.build_params.outputs.image_name }}
+      tag: ${{ steps.build_params.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Wait for ci pass
+        uses: lewagon/wait-on-check-action@v1.1.1
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'test'
+          wait-interval: 10
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get build params
+        id: build_params
+        run: |
+          echo "::set-output name=tag::${{ github.ref_name }}"
+          if [ "${{ github.ref }}" == "refs/heads/develop" ]
+          then
+            echo "::set-output name=env_path::./.github/.env.staging"
+            echo "::set-output name=image_name::trava-governance-app-staging"
+          else
+            echo "::set-output name=env_path::./.github/.env.production"
+            echo "::set-output name=image_name::trava-governance-app"
+          fi
+
+      - name: Prepare env
+        if: ${{ steps.build_params.outputs.env_path }}
+        run: |
+          echo ${{ steps.build_params.outputs.env_path }}
+          cp ${ENV:-'${{ steps.build_params.outputs.env_path }}'} .env
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-app-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-buildx-app
+
+      - name: Build and Push docker image
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.build_params.outputs.image_name }}:${{ steps.build_params.outputs.tag }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Deployed Image
+        id: deployed_image
+        run: |
+          echo ${{ steps.docker_build.outputs.digest }}
+
+  deploy_to_staging:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/develop' }}
+    needs: build_and_push
+    steps:
+      - name: ssh to staging server and re-deploy app
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_SSH_USERNAME }}
+          port: ${{ secrets.STAGING_PORT }}
+          key: ${{ secrets.STAGING_KEY }}
+          script: |
+            cd scripts/
+            chmod +x trava-governance-app-staging.sh 
+            ./trava-governance-app-staging.sh ${{ needs.build_and_push.outputs.image_name }} ${{ needs.build_and_push.outputs.tag }}
+
+  deploy_to_production:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: build_and_push
+    steps:
+      - name: ssh to production server and re-deploy app
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          port: ${{ secrets.PORT }}
+          key: ${{ secrets.KEY }}
+          script: |
+            cd scripts/
+            chmod +x trava-governance-app.sh
+            ./trava-governance-app.sh ${{ needs.build_and_push.outputs.image_name }} ${{ needs.build_and_push.outputs.tag }}
