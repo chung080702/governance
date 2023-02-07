@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.js": "/project1/static/js/main.123c989a.js",
+    "static/js/307.fded8128.chunk.js": "/project1/static/js/307.fded8128.chunk.js",
+    "static/js/188.f0583cff.chunk.js": "/project1/static/js/188.f0583cff.chunk.js",
+    "static/js/27.31c80883.chunk.js": "/project1/static/js/27.31c80883.chunk.js",
+    "static/js/736.1510de02.chunk.js": "/project1/static/js/736.1510de02.chunk.js",
+    "index.html": "/project1/index.html"
+  },
+  "entrypoints": [
+    "static/js/main.123c989a.js"
+  ]
+}
